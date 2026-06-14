@@ -37,8 +37,8 @@ async def start(update, context):
     if user_id == ADMIN_ID:
 
         keyboard = [
-            ["📩 Latest Code"],
-            ["🟢 Status"],
+            ["📩 Latest Code", "📜 History"],
+            ["📊 Stats", "🟢 Status"],
             ["🔑 License", "❓ Help"],
             ["🛠 Admin Panel"]
         ]
