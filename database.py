@@ -29,7 +29,6 @@ def init_db():
     conn.close()
 
 def get_license_expiry(user_id):
-
     conn = sqlite3.connect("database.db")
     cursor = conn.cursor()
 
@@ -37,40 +36,33 @@ def get_license_expiry(user_id):
         """
         SELECT expiry
         FROM licenses
-        WHERE used_by = ?
+        WHERE used_by = ? AND expiry IS NOT NULL
+        ORDER BY expiry DESC
+        LIMIT 1
         """,
         (user_id,)
     )
 
     row = cursor.fetchone()
-
     conn.close()
 
     return row[0] if row else None
 
-
 def get_days_remaining(user_id):
-
     expiry = get_license_expiry(user_id)
 
     if not expiry:
         return None
 
-    expiry_date = datetime.strptime(
-        expiry,
-        "%Y-%m-%d"
-    )
-
-    today = datetime.now()
-
-    days = (expiry_date - today).days
-
-    return days
-
-
+    try:
+        expiry_date = datetime.strptime(expiry, "%Y-%m-%d").date()
+        today = datetime.now().date()
+        days = (expiry_date - today).days
+        return max(0, days)
+    except ValueError:
+        return 0
 
 def generate_license(days):
-
     key = "RAKEXURA-" + ''.join(
         random.choices(
             string.ascii_uppercase + string.digits,
@@ -94,8 +86,6 @@ def generate_license(days):
     conn.close()
 
     return key
-
-
 
 def activate_license(key, user_id):
     conn = sqlite3.connect("database.db")
@@ -122,10 +112,29 @@ def activate_license(key, user_id):
         conn.close()
         return "used"
 
-    expiry = (
-        datetime.now() +
-        timedelta(days=days)
-    ).strftime("%Y-%m-%d")
+    # Check if user already has an active license to stack/extend from
+    cursor.execute(
+        """
+        SELECT expiry
+        FROM licenses
+        WHERE used_by = ? AND expiry IS NOT NULL
+        ORDER BY expiry DESC
+        LIMIT 1
+        """,
+        (user_id,)
+    )
+    active_row = cursor.fetchone()
+
+    base_date = datetime.now()
+    if active_row:
+        try:
+            current_expiry = datetime.strptime(active_row[0], "%Y-%m-%d")
+            if current_expiry.date() >= datetime.now().date():
+                base_date = current_expiry
+        except ValueError:
+            pass
+
+    expiry = (base_date + timedelta(days=days)).strftime("%Y-%m-%d")
 
     cursor.execute(
         """
@@ -143,9 +152,7 @@ def activate_license(key, user_id):
 
     return expiry
 
-
 def is_user_active(user_id):
-
     conn = sqlite3.connect("database.db")
     cursor = conn.cursor()
 
@@ -153,24 +160,24 @@ def is_user_active(user_id):
         """
         SELECT expiry
         FROM licenses
-        WHERE used_by = ?
+        WHERE used_by = ? AND expiry IS NOT NULL
+        ORDER BY expiry DESC
+        LIMIT 1
         """,
         (user_id,)
     )
 
     row = cursor.fetchone()
-
     conn.close()
 
     if not row:
         return False
 
-    expiry_date = datetime.strptime(
-        row[0],
-        "%Y-%m-%d"
-    )
-
-    return expiry_date >= datetime.now()
+    try:
+        expiry_date = datetime.strptime(row[0], "%Y-%m-%d").date()
+        return expiry_date >= datetime.now().date()
+    except ValueError:
+        return False
 
 def save_code(code):
     conn = sqlite3.connect("database.db")
@@ -193,7 +200,6 @@ def clear_history():
     conn.commit()
     conn.close()
 
-
 def code_exists(code):
     conn = sqlite3.connect("database.db")
     cursor = conn.cursor()
@@ -204,7 +210,6 @@ def code_exists(code):
     )
 
     result = cursor.fetchone()
-
     conn.close()
 
     return result is not None
@@ -219,11 +224,9 @@ def get_history(limit=5):
     )
 
     rows = cursor.fetchall()
-
     conn.close()
 
     return [row[0] for row in rows]
-
 
 def get_stats():
     conn = sqlite3.connect("database.db")
@@ -237,7 +240,6 @@ def get_stats():
     )
 
     latest = cursor.fetchone()
-
     conn.close()
 
     return {
@@ -246,23 +248,25 @@ def get_stats():
     }
 
 def get_admin_stats():
-
     conn = sqlite3.connect("database.db")
     cursor = conn.cursor()
 
-    cursor.execute(
-        "SELECT COUNT(*) FROM licenses"
-    )
+    cursor.execute("SELECT COUNT(*) FROM licenses")
     total_keys = cursor.fetchone()[0]
 
+    # Count unique users with at least one active license today
+    today = datetime.now().strftime("%Y-%m-%d")
     cursor.execute(
-        "SELECT COUNT(*) FROM licenses WHERE used = 1"
+        """
+        SELECT COUNT(DISTINCT used_by)
+        FROM licenses
+        WHERE used = 1 AND used_by IS NOT NULL AND expiry >= ?
+        """,
+        (today,)
     )
     active_users = cursor.fetchone()[0]
 
-    cursor.execute(
-        "SELECT COUNT(*) FROM codes"
-    )
+    cursor.execute("SELECT COUNT(*) FROM codes")
     total_codes = cursor.fetchone()[0]
 
     conn.close()
@@ -274,41 +278,41 @@ def get_admin_stats():
     }
 
 def get_users():
-
     conn = sqlite3.connect("database.db")
     cursor = conn.cursor()
 
+    # Get unique users with their maximum active expiry date
+    today = datetime.now().strftime("%Y-%m-%d")
     cursor.execute("""
-        SELECT used_by, expiry
+        SELECT used_by, MAX(expiry) as latest_expiry
         FROM licenses
-        WHERE used = 1
-    """)
+        WHERE used = 1 AND used_by IS NOT NULL AND expiry >= ?
+        GROUP BY used_by
+    """, (today,))
 
     users = cursor.fetchall()
-
     conn.close()
 
     return users
 
 def get_all_user_ids():
-
     conn = sqlite3.connect("database.db")
     cursor = conn.cursor()
 
+    # Get all unique active users today
+    today = datetime.now().strftime("%Y-%m-%d")
     cursor.execute("""
         SELECT DISTINCT used_by
         FROM licenses
-        WHERE used = 1
-    """)
+        WHERE used = 1 AND used_by IS NOT NULL AND expiry >= ?
+    """, (today,))
 
     users = cursor.fetchall()
-
     conn.close()
 
-    return [user[0] for user in users]   
+    return [user[0] for user in users if user[0] is not None]
 
 def revoke_user(user_id):
-
     conn = sqlite3.connect("database.db")
     cursor = conn.cursor()
 
@@ -327,15 +331,16 @@ def revoke_user(user_id):
     conn.close()
 
 def extend_license(user_id, days):
-
     conn = sqlite3.connect("database.db")
     cursor = conn.cursor()
 
     cursor.execute(
         """
-        SELECT expiry
+        SELECT id, expiry
         FROM licenses
-        WHERE used_by = ?
+        WHERE used_by = ? AND expiry IS NOT NULL
+        ORDER BY expiry DESC
+        LIMIT 1
         """,
         (user_id,)
     )
@@ -346,23 +351,23 @@ def extend_license(user_id, days):
         conn.close()
         return False
 
-    expiry = datetime.strptime(
-        row[0],
-        "%Y-%m-%d"
-    )
+    license_id, expiry = row
 
-    new_expiry = (
-        expiry +
-        timedelta(days=days)
-    ).strftime("%Y-%m-%d")
+    try:
+        expiry_dt = datetime.strptime(expiry, "%Y-%m-%d")
+    except ValueError:
+        conn.close()
+        return False
+
+    new_expiry = (expiry_dt + timedelta(days=days)).strftime("%Y-%m-%d")
 
     cursor.execute(
         """
         UPDATE licenses
         SET expiry = ?
-        WHERE used_by = ?
+        WHERE id = ?
         """,
-        (new_expiry, user_id)
+        (new_expiry, license_id)
     )
 
     conn.commit()
