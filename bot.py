@@ -288,27 +288,30 @@ async def license_info(update, context):
 
     if not expiry:
         await update.message.reply_text(
-            "❌ No active license found."
+            f"❌ No active license found.\n\n"
+            f"🆔 Your Telegram ID: `{user_id}`",
+            parse_mode="Markdown"
         )
         return
 
     days = get_days_remaining(user_id)
 
     message = (
-        f"🔑 License Active\n\n"
-        f"Expiry: {expiry}\n"
-        f"⏳ Days Remaining: {days if days is not None else 0}\n\n"
-        f"📲 Renewal Contact:\n"
+        f"🔑 **License Status**\n\n"
+        f"🆔 **Your Telegram ID**: `{user_id}`\n"
+        f"📅 **Expiry**: `{expiry}`\n"
+        f"⏳ **Days Remaining**: {days if days is not None else 0}\n\n"
+        f"📲 **Renewal Contact**:\n"
         f"{WHATSAPP_NUMBER}"
     )
 
     if days is not None and days <= 3:
         message += (
-            "\n\n⚠️ License Expiring Soon!\n"
+            "\n\n⚠️ **License Expiring Soon!**\n"
             "Please renew to avoid interruption."
         )
 
-    await update.message.reply_text(message)
+    await update.message.reply_text(message, parse_mode="Markdown")
 
 async def check_access(update):
     register_current_user(update)
