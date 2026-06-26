@@ -173,8 +173,28 @@ async def extend(update, context):
         )
         return
 
+    # Notify the specific user about the license extension
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=(
+                f"🎉 **License Extended!**\n\n"
+                f"Your license has been extended by **{days} days**.\n"
+                f"📅 **New Expiry Date**: `{expiry}`\n\n"
+                f"Thank you! 🎮"
+            ),
+            parse_mode="Markdown"
+        )
+        notification_status = "User notified successfully."
+    except Exception as e:
+        logger.warning(f"Failed to send extension notice to user {user_id}: {e}")
+        notification_status = "Failed to notify the user (they may have stopped the bot)."
+
     await update.message.reply_text(
-        f"✅ License extended.\n\nNew Expiry: {expiry}"
+        f"✅ License extended.\n\n"
+        f"📅 New Expiry: `{expiry}`\n"
+        f"🔔 Status: {notification_status}",
+        parse_mode="Markdown"
     )
 
 async def adminhelp(update, context):
