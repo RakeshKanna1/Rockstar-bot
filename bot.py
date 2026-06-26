@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from config import BOT_TOKEN, ADMIN_ID, WHATSAPP_NUMBER
@@ -17,7 +18,8 @@ from database import (
     get_admin_stats,
     get_all_user_ids,
     revoke_user,
-    extend_license
+    extend_license,
+    save_user_info
 )
 
 # Setup logging
@@ -27,7 +29,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def register_current_user(update):
+    if not update or not update.effective_user:
+        return
+    user_id = update.effective_user.id
+    first_name = update.effective_user.first_name
+    username = update.effective_user.username
+    try:
+        save_user_info(user_id, first_name, username)
+    except Exception as e:
+        logger.error(f"Error saving user info: {e}")
+
 async def start(update, context):
+    register_current_user(update)
     user_id = update.effective_user.id
     username = update.effective_user.first_name
 
@@ -70,27 +84,58 @@ async def users(update, context):
     if update.effective_user.id != ADMIN_ID:
         return
 
+    register_current_user(update)
     data = get_users()
 
     if not data:
         await update.message.reply_text(
-            "No active users found."
+            "No users found."
         )
         return
 
-    message = "👥 Active Users\n\n"
-    for user_id, expiry in data:
+    message = "👥 Rockstar Bot Users List\n\n"
+    for user_id, expiry, first_name, username in data:
+        name_str = first_name if first_name else "Unknown"
+        if username:
+            name_str += f" (@{username})"
+
+        # Calculate days remaining or elapsed
+        try:
+            expiry_date = datetime.strptime(expiry, "%Y-%m-%d").date()
+            today = datetime.now().date()
+            days = (expiry_date - today).days
+        except (ValueError, TypeError):
+            days = None
+
+        if days is None:
+            status_str = "Unknown Expiry"
+        elif days > 0:
+            status_str = f"✅ Active (⏳ {days} day{'s' if days > 1 else ''} left)"
+        elif days == 0:
+            status_str = "⚠️ Expires today!"
+        else:
+            status_str = f"❌ Expired ({abs(days)} day{'s' if abs(days) > 1 else ''} ago)"
+
         message += (
-            f"🆔 {user_id}\n"
-            f"🔑 Expiry: {expiry}\n\n"
+            f"👤 **Name**: {name_str}\n"
+            f"🆔 **ID**: `{user_id}`\n"
+            f"📅 **Expiry**: {expiry}\n"
+            f"💡 **Status**: {status_str}\n\n"
         )
 
-    await update.message.reply_text(message)
+    # Chunk output if text exceeds Telegram's limit
+    if len(message) > 4000:
+        chunks = [message[i:i+4000] for i in range(0, len(message), 4000)]
+        for chunk in chunks:
+            await update.message.reply_text(chunk, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(message, parse_mode="Markdown")
 
 async def admin(update, context):
     if update.effective_user.id != ADMIN_ID:
         return
 
+    register_current_user(update)
     data = get_admin_stats()
 
     await update.message.reply_text(
@@ -104,6 +149,7 @@ async def extend(update, context):
     if update.effective_user.id != ADMIN_ID:
         return
 
+    register_current_user(update)
     if len(context.args) != 2:
         await update.message.reply_text(
             "Usage:\n/extend USER_ID DAYS"
@@ -135,6 +181,7 @@ async def adminhelp(update, context):
     if update.effective_user.id != ADMIN_ID:
         return
 
+    register_current_user(update)
     await update.message.reply_text(
         "🛠 Rakexura Admin Panel Help\n\n"
 
@@ -144,7 +191,7 @@ async def adminhelp(update, context):
         "• /revoke USER_ID - Revoke access for a user\n\n"
 
         "👥 User Management:\n"
-        "• /users - List all users with active licenses\n"
+        "• /users - List all users with active/expired licenses\n"
         "• /admin - View active stats overview\n\n"
 
         "📢 Communication:\n"
@@ -164,6 +211,7 @@ async def revoke(update, context):
     if update.effective_user.id != ADMIN_ID:
         return
 
+    register_current_user(update)
     if len(context.args) != 1:
         await update.message.reply_text(
             "Usage:\n/revoke USER_ID"
@@ -188,6 +236,7 @@ async def broadcast(update, context):
     if update.effective_user.id != ADMIN_ID:
         return
 
+    register_current_user(update)
     if not context.args:
         await update.message.reply_text(
             "Usage:\n/broadcast Your message"
@@ -213,6 +262,7 @@ async def broadcast(update, context):
     )
 
 async def license_info(update, context):
+    register_current_user(update)
     user_id = update.effective_user.id
     expiry = get_license_expiry(user_id)
 
@@ -241,6 +291,7 @@ async def license_info(update, context):
     await update.message.reply_text(message)
 
 async def check_access(update):
+    register_current_user(update)
     user_id = update.effective_user.id
 
     # Admin bypass
@@ -259,6 +310,7 @@ async def menu_buttons(update, context):
     if not await check_access(update):
         return
 
+    register_current_user(update)
     text = update.message.text
 
     if text == "📩 Latest Code":
@@ -320,6 +372,7 @@ async def menu_buttons(update, context):
         await adminhelp(update, context)
 
 async def activate(update, context):
+    register_current_user(update)
     if len(context.args) != 1:
         await update.message.reply_text(
             "Usage:\n/activate YOUR_KEY"
@@ -372,6 +425,7 @@ async def genkey(update, context):
     if update.effective_user.id != ADMIN_ID:
         return
 
+    register_current_user(update)
     if len(context.args) == 0:
         await update.message.reply_text(
             "Usage:\n/genkey 30"
@@ -398,6 +452,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🟢 Online")
 
 async def help_command(update, context):
+    register_current_user(update)
     user_id = update.effective_user.id
     if user_id == ADMIN_ID:
         await update.message.reply_text(
@@ -451,6 +506,7 @@ async def stats(update, context):
         )
         return
 
+    register_current_user(update)
     data = get_stats()
 
     await update.message.reply_text(
@@ -467,6 +523,7 @@ async def history(update, context):
         )
         return
 
+    register_current_user(update)
     codes = get_history()
 
     if not codes:
@@ -488,6 +545,7 @@ async def clearhistory(update, context):
         )
         return
 
+    register_current_user(update)
     clear_history()
     await update.message.reply_text("✅ Saved codes history cleared.")
 

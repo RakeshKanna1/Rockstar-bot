@@ -25,6 +25,32 @@ def init_db():
     )
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        first_name TEXT,
+        username TEXT,
+        last_seen TEXT
+    )
+    """)
+
+    conn.commit()
+    conn.close()
+
+def save_user_info(user_id, first_name, username):
+    conn = sqlite3.connect("database.db")
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO users (user_id, first_name, username, last_seen)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            first_name = excluded.first_name,
+            username = excluded.username,
+            last_seen = excluded.last_seen
+        """,
+        (user_id, first_name, username, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    )
     conn.commit()
     conn.close()
 
@@ -281,14 +307,14 @@ def get_users():
     conn = sqlite3.connect("database.db")
     cursor = conn.cursor()
 
-    # Get unique users with their maximum active expiry date
-    today = datetime.now().strftime("%Y-%m-%d")
+    # Get unique users, their latest expiry, and their name/username from the users table
     cursor.execute("""
-        SELECT used_by, MAX(expiry) as latest_expiry
-        FROM licenses
-        WHERE used = 1 AND used_by IS NOT NULL AND expiry >= ?
-        GROUP BY used_by
-    """, (today,))
+        SELECT l.used_by, MAX(l.expiry) as latest_expiry, u.first_name, u.username
+        FROM licenses l
+        LEFT JOIN users u ON l.used_by = u.user_id
+        WHERE l.used = 1 AND l.used_by IS NOT NULL
+        GROUP BY l.used_by
+    """)
 
     users = cursor.fetchall()
     conn.close()
