@@ -1,7 +1,8 @@
 import logging
+import os
 from datetime import datetime
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
 from config import BOT_TOKEN, ADMIN_ID, WHATSAPP_NUMBER
 from gmail_reader import get_latest_code
 from database import (
@@ -210,7 +211,149 @@ async def user_command(update, context):
         for key, days_count, exp, used in licenses:
             message += f"• `{key}` ({days_count} days) · Expiry: {exp or 'None'} · Used: {'Yes' if used else 'No'}\n"
 
-    await update.message.reply_text(message, parse_mode="Markdown")
+    keyboard = [
+        [
+            InlineKeyboardButton("⏳ +7 Days", callback_data=f"extend:{user_id}:7"),
+            InlineKeyboardButton("⏳ +30 Days", callback_data=f"extend:{user_id}:30"),
+        ],
+        [
+            InlineKeyboardButton("❌ Revoke", callback_data=f"revoke:{user_id}"),
+            InlineKeyboardButton("🔄 Refresh", callback_data=f"detail:{user_id}"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(message, parse_mode="Markdown", reply_markup=reply_markup)
+
+async def show_user_detail_callback(query, user_id):
+    details = get_user_details(user_id)
+    if not details:
+        await query.edit_message_text(f"❌ User ID `{user_id}` not found.")
+        return
+
+    first_name, username, last_seen = details["profile"] if details["profile"] else ("Unknown", None, "Never")
+    licenses = details["licenses"]
+
+    name_str = first_name
+    if username:
+        name_str += f" (@{username})"
+
+    expiry = get_license_expiry(user_id)
+    if expiry:
+        days = get_days_remaining(user_id)
+        if days is None:
+            status_str = "Unknown Expiry"
+        elif days > 0:
+            status_str = f"✅ Active (⏳ {days} day{'s' if days > 1 else ''} left)"
+        elif days == 0:
+            status_str = "⚠️ Expires today!"
+        else:
+            status_str = f"❌ Expired ({abs(days)} day{'s' if abs(days) > 1 else ''} ago)"
+    else:
+        status_str = "❌ No active license found"
+
+    message = (
+        f"👤 **User Profile**\n"
+        f"• **Name**: {name_str}\n"
+        f"• **ID**: `{user_id}`\n"
+        f"• **Last Seen**: `{last_seen}`\n"
+        f"• **Status**: {status_str}\n"
+        f"• **License Expiry**: `{expiry or 'None'}`\n\n"
+        f"🔑 **License Keys History**:\n"
+    )
+
+    if not licenses:
+        message += "No licenses activated yet."
+    else:
+        for key, days_count, exp, used in licenses:
+            message += f"• `{key}` ({days_count} days) · Expiry: {exp or 'None'} · Used: {'Yes' if used else 'No'}\n"
+
+    keyboard = [
+        [
+            InlineKeyboardButton("⏳ +7 Days", callback_data=f"extend:{user_id}:7"),
+            InlineKeyboardButton("⏳ +30 Days", callback_data=f"extend:{user_id}:30"),
+        ],
+        [
+            InlineKeyboardButton("❌ Revoke", callback_data=f"revoke:{user_id}"),
+            InlineKeyboardButton("🔄 Refresh", callback_data=f"detail:{user_id}"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(message, parse_mode="Markdown", reply_markup=reply_markup)
+
+async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    data = query.data.split(":")
+    action = data[0]
+    user_id = int(data[1])
+
+    if action == "extend":
+        days = int(data[2])
+        from database import extend_license
+        expiry = extend_license(user_id, days)
+        if not expiry:
+            await query.edit_message_text("❌ Failed to extend license. User not found.")
+            return
+
+        # Notify the user
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    f"🎉 **License Extended!**\n\n"
+                    f"Your license has been extended by **{days} days**.\n"
+                    f"📅 **New Expiry Date**: `{expiry}`\n\n"
+                    f"Thank you! 🎮"
+                ),
+                parse_mode="Markdown"
+            )
+            notify_str = "User notified successfully."
+        except Exception as e:
+            notify_str = f"Failed to notify user: {e}"
+
+        await query.edit_message_text(
+            f"✅ License extended by **{days} days** for User `{user_id}`.\n"
+            f"📅 New Expiry: `{expiry}`\n"
+            f"🔔 Notification: {notify_str}",
+            parse_mode="Markdown"
+        )
+
+    elif action == "revoke":
+        from database import revoke_user
+        revoke_user(user_id)
+        await query.edit_message_text(
+            f"❌ License access for User `{user_id}` has been revoked.",
+            parse_mode="Markdown"
+        )
+
+    elif action == "detail":
+        await show_user_detail_callback(query, user_id)
+
+async def backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    register_current_user(update)
+
+    if not os.path.exists("database.db"):
+        await update.message.reply_text("❌ database.db file not found.")
+        return
+
+    await update.message.reply_text("📤 Backing up database... sending file...")
+    try:
+        with open("database.db", "rb") as f:
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=f,
+                filename="database_backup.db",
+                caption="💾 Rockstar Bot SQLite Database Backup"
+            )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Failed to send database backup: {e}")
 
 async def admin(update, context):
     if update.effective_user.id != ADMIN_ID:
@@ -303,7 +446,8 @@ async def adminhelp(update, context):
         "• /license - View your own license info\n"
         "• /stats - View code repository stats\n"
         "• /history - View latest code history\n"
-        "• /clearhistory - Clear saved verification codes\n\n"
+        "• /clearhistory - Clear saved verification codes\n"
+        "• /backup - Download SQLite database backup\n\n"
 
         "❓ Help:\n"
         "• /adminhelp - Show this panel"
@@ -679,6 +823,10 @@ def main():
     app.add_handler(CommandHandler("user", user_command))
     app.add_handler(CommandHandler("adminhelp", adminhelp))
     app.add_handler(CommandHandler("clearhistory", clearhistory))
+    app.add_handler(CommandHandler("backup", backup))
+
+    # Callback Query Handlers
+    app.add_handler(CallbackQueryHandler(admin_callbacks))
 
     # Message handlers
     app.add_handler(MessageHandler(filters.Regex(r"^RAKEXURA-"), auto_activate))
