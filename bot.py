@@ -19,7 +19,9 @@ from database import (
     get_all_user_ids,
     revoke_user,
     extend_license,
-    save_user_info
+    save_user_info,
+    find_user_by_username,
+    get_user_details
 )
 
 # Setup logging
@@ -131,6 +133,85 @@ async def users(update, context):
     else:
         await update.message.reply_text(message, parse_mode="Markdown")
 
+async def user_command(update, context):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    register_current_user(update)
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage:\n"
+            "• `/user USER_ID` - Get info for a specific user ID\n"
+            "• `/user @username` - Get info for a specific username\n"
+            "• Use `/users` to list all users",
+            parse_mode="Markdown"
+        )
+        return
+
+    query = context.args[0]
+    user_id = None
+
+    # Check if username query
+    if query.startswith("@") or not query.isdigit():
+        username = query.lstrip("@")
+        user_id = find_user_by_username(username)
+        if not user_id:
+            await update.message.reply_text(f"❌ User with username `@{username}` not found in database.", parse_mode="Markdown")
+            return
+    else:
+        try:
+            user_id = int(query)
+        except ValueError:
+            await update.message.reply_text("❌ User ID must be a number or a valid username starting with @.")
+            return
+
+    details = get_user_details(user_id)
+
+    if not details:
+        await update.message.reply_text(f"❌ No records found for User ID `{user_id}`.", parse_mode="Markdown")
+        return
+
+    first_name, username, last_seen = details["profile"] if details["profile"] else ("Unknown", None, "Never")
+    licenses = details["licenses"]
+
+    name_str = first_name
+    if username:
+        name_str += f" (@{username})"
+
+    # Get active expiry
+    expiry = get_license_expiry(user_id)
+    if expiry:
+        days = get_days_remaining(user_id)
+        if days is None:
+            status_str = "Unknown Expiry"
+        elif days > 0:
+            status_str = f"✅ Active (⏳ {days} day{'s' if days > 1 else ''} left)"
+        elif days == 0:
+            status_str = "⚠️ Expires today!"
+        else:
+            status_str = f"❌ Expired ({abs(days)} day{'s' if abs(days) > 1 else ''} ago)"
+    else:
+        status_str = "❌ No active license found"
+
+    message = (
+        f"👤 **User Profile**\n"
+        f"• **Name**: {name_str}\n"
+        f"• **ID**: `{user_id}`\n"
+        f"• **Last Seen**: `{last_seen}`\n"
+        f"• **Status**: {status_str}\n"
+        f"• **License Expiry**: `{expiry or 'None'}`\n\n"
+        f"🔑 **License Keys History**:\n"
+    )
+
+    if not licenses:
+        message += "No licenses activated yet."
+    else:
+        for key, days_count, exp, used in licenses:
+            message += f"• `{key}` ({days_count} days) · Expiry: {exp or 'None'} · Used: {'Yes' if used else 'No'}\n"
+
+    await update.message.reply_text(message, parse_mode="Markdown")
+
 async def admin(update, context):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -212,6 +293,7 @@ async def adminhelp(update, context):
 
         "👥 User Management:\n"
         "• /users - List all users with active/expired licenses\n"
+        "• /user USER_ID/@username - Get specific user info\n"
         "• /admin - View active stats overview\n\n"
 
         "📢 Communication:\n"
@@ -594,6 +676,7 @@ def main():
     app.add_handler(CommandHandler("license", license_info))
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CommandHandler("users", users))
+    app.add_handler(CommandHandler("user", user_command))
     app.add_handler(CommandHandler("adminhelp", adminhelp))
     app.add_handler(CommandHandler("clearhistory", clearhistory))
 

@@ -400,3 +400,34 @@ def extend_license(user_id, days):
     conn.close()
 
     return new_expiry
+
+def find_user_by_username(username):
+    username = username.lstrip('@')
+    conn = sqlite3.connect("database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users WHERE username LIKE ?", (username,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def get_user_details(user_id):
+    conn = sqlite3.connect("database.db")
+    cursor = conn.cursor()
+    
+    # Get user profile
+    cursor.execute("SELECT first_name, username, last_seen FROM users WHERE user_id = ?", (user_id,))
+    user_row = cursor.fetchone()
+    
+    # Get licenses
+    cursor.execute("SELECT license_key, days, expiry, used FROM licenses WHERE used_by = ? ORDER BY id DESC", (user_id,))
+    licenses = cursor.fetchall()
+    
+    conn.close()
+    
+    if not user_row and not licenses:
+        return None
+        
+    return {
+        "profile": user_row,
+        "licenses": licenses
+    }
