@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackQueryHandler
@@ -354,6 +355,87 @@ async def backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
     except Exception as e:
         await update.message.reply_text(f"❌ Failed to send database backup: {e}")
+
+async def check_expired_licenses_loop(app):
+    await asyncio.sleep(10) # Initial wait for bot to start up
+    while True:
+        try:
+            logger.info("Running background license expiry check...")
+            from datetime import datetime
+            import sqlite3
+            
+            conn = sqlite3.connect("database.db")
+            cursor = conn.cursor()
+            
+            # Find all users who are currently marked as used/active but their expiry is past today
+            today = datetime.now().strftime("%Y-%m-%d")
+            cursor.execute("""
+                SELECT DISTINCT used_by, expiry
+                FROM licenses
+                WHERE used = 1 AND used_by IS NOT NULL AND expiry < ?
+            """, (today,))
+            
+            expired_users = cursor.fetchall()
+            conn.close()
+            
+            for user_id, expiry in expired_users:
+                # 1. Revoke in database
+                from database import revoke_user
+                revoke_user(user_id)
+                logger.info(f"Automatically revoked expired license for user {user_id} (expired {expiry})")
+                
+                # 2. Get user's profile details to show username
+                from database import get_user_details
+                details = get_user_details(user_id)
+                username = None
+                first_name = "User"
+                if details and details["profile"]:
+                    first_name, username, _ = details["profile"]
+                
+                name_str = first_name
+                if username:
+                    name_str += f" (@{username})"
+
+                # 3. Message the user
+                try:
+                    await app.bot.send_message(
+                        chat_id=user_id,
+                        text=(
+                            f"⚠️ **License Expired!**\n\n"
+                            f"Hello {first_name}, your Rakexura Rockstar license key expired on `{expiry}`.\n"
+                            f"Access to bot features has been automatically revoked.\n\n"
+                            f"📲 To renew your license, contact: {WHATSAPP_NUMBER}\n"
+                            f"Thank you for choosing Rakexura! 🎮"
+                        ),
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to notify user {user_id} about license expiry: {e}")
+
+                # 4. Message the admin
+                try:
+                    await app.bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=(
+                            f"⚠️ **License Expired & Revoked**\n\n"
+                            f"• **User**: {name_str}\n"
+                            f"• **ID**: `{user_id}`\n"
+                            f"• **Expired Date**: `{expiry}`\n"
+                            f"Successfully notified and status updated to Revoked."
+                        ),
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send admin notification for user {user_id} expiry: {e}")
+
+        except Exception as e:
+            logger.error(f"Error in background expiry check loop: {e}", exc_info=True)
+            
+        # Run check every 1 hour
+        await asyncio.sleep(3600)
+
+async def post_init(application: Application) -> None:
+    asyncio.create_task(check_expired_licenses_loop(application))
 
 async def admin(update, context):
     if update.effective_user.id != ADMIN_ID:
@@ -802,7 +884,7 @@ def main():
     # Run DB init to ensure tables exist
     init_db()
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     # Commands
     app.add_handler(CommandHandler("start", start))
