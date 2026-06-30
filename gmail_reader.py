@@ -12,8 +12,9 @@ def get_latest_code():
     if token_env:
         try:
             import json
-            # Clean up copy-paste newlines and control characters
-            token_data = json.loads(token_env.strip())
+            # Clean up all copy-paste wrapping spaces, tabs, newlines, and carriage returns
+            cleaned_env = token_env.replace("\n", "").replace("\r", "").replace(" ", "").replace("\t", "")
+            token_data = json.loads(cleaned_env)
             with open("token.json", "w") as token_file:
                 json.dump(token_data, token_file)
             logger.info("Successfully synced and cleaned token.json from environment variables.")
