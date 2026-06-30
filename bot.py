@@ -290,6 +290,148 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data.split(":")
     action = data[0]
+
+    # Handle global admin actions that don't need a specific user_id
+    if action == "admin_genkey_menu":
+        keyboard = [
+            [
+                InlineKeyboardButton("1 Day", callback_data="admin_genkey_exec:1"),
+                InlineKeyboardButton("7 Days", callback_data="admin_genkey_exec:7"),
+            ],
+            [
+                InlineKeyboardButton("30 Days", callback_data="admin_genkey_exec:30"),
+                InlineKeyboardButton("90 Days", callback_data="admin_genkey_exec:90"),
+            ],
+            [
+                InlineKeyboardButton("365 Days", callback_data="admin_genkey_exec:365"),
+            ],
+            [
+                InlineKeyboardButton("⬅️ Back to Admin", callback_data="admin_menu")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            "🔑 **Select Key Duration**\n\nChoose the duration for the new license key:",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+        return
+
+    elif action == "admin_genkey_exec":
+        days = int(data[1])
+        key = generate_license(days)
+        keyboard = [
+            [InlineKeyboardButton("⬅️ Back to Admin", callback_data="admin_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            f"🔑 **License Key Generated!**\n\n"
+            f"Key: `{key}`\n"
+            f"Duration: **{days} days**\n\n"
+            f"Share this key with the user.",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+        return
+
+    elif action == "admin_menu":
+        data_stats = get_admin_stats()
+        keyboard = [
+            [
+                InlineKeyboardButton("🔑 Gen Key", callback_data="admin_genkey_menu"),
+                InlineKeyboardButton("👥 Users List", callback_data="admin_users"),
+            ],
+            [
+                InlineKeyboardButton("💾 Backup DB", callback_data="admin_backup"),
+                InlineKeyboardButton("📩 Latest Code", callback_data="admin_latest"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            f"🛠 Admin Dashboard\n\n"
+            f"👥 Active Users: {data_stats['users']}\n"
+            f"🔑 Generated Keys: {data_stats['keys']}\n"
+            f"📩 Saved Codes: {data_stats['codes']}",
+            reply_markup=reply_markup
+        )
+        return
+
+    elif action == "admin_users":
+        data_users = get_users()
+        keyboard = [
+            [InlineKeyboardButton("⬅️ Back to Admin", callback_data="admin_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        if not data_users:
+            await query.edit_message_text("No users found.", reply_markup=reply_markup)
+            return
+
+        message = "👥 Rockstar Bot Users List\n\n"
+        for u_id, expiry, first_name, username in data_users:
+            name_str = first_name if first_name else "Unknown"
+            if username:
+                name_str += f" (@{username})"
+
+            try:
+                expiry_date = datetime.strptime(expiry, "%Y-%m-%d").date()
+                today_date = datetime.now().date()
+                days = (expiry_date - today_date).days
+            except (ValueError, TypeError):
+                days = None
+
+            if days is None:
+                status_str = "Unknown Expiry"
+            elif days > 0:
+                status_str = f"✅ Active (⏳ {days} day{'s' if days > 1 else ''} left)"
+            elif days == 0:
+                status_str = "⚠️ Expires today!"
+            else:
+                status_str = f"❌ Expired ({abs(days)} day{'s' if abs(days) > 1 else ''} ago)"
+
+            message += (
+                f"👤 **Name**: {name_str}\n"
+                f"🆔 **ID**: `{u_id}`\n"
+                f"📅 **Expiry**: {expiry}\n"
+                f"💡 **Status**: {status_str}\n\n"
+            )
+
+        if len(message) > 4000:
+            message = message[:3900] + "\n... (Truncated due to length)"
+        
+        await query.edit_message_text(message, parse_mode="Markdown", reply_markup=reply_markup)
+        return
+
+    elif action == "admin_backup":
+        keyboard = [
+            [InlineKeyboardButton("⬅️ Back to Admin", callback_data="admin_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        if not os.path.exists("database.db"):
+            await query.edit_message_text("❌ database.db file not found.", reply_markup=reply_markup)
+            return
+
+        try:
+            with open("database.db", "rb") as f:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=f,
+                    filename="database_backup.db",
+                    caption="💾 Rockstar Bot SQLite Database Backup"
+                )
+            await query.edit_message_text("✅ Backup sent successfully to this chat!", reply_markup=reply_markup)
+        except Exception as e:
+            await query.edit_message_text(f"❌ Failed to send backup: {e}", reply_markup=reply_markup)
+        return
+
+    elif action == "admin_latest":
+        code = get_latest_code()
+        keyboard = [
+            [InlineKeyboardButton("⬅️ Back to Admin", callback_data="admin_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(f"🎮 Latest Rockstar Code:\n\n`{code}`", parse_mode="Markdown", reply_markup=reply_markup)
+        return
+
     user_id = int(data[1])
 
     if action == "extend":
@@ -367,12 +509,17 @@ async def check_expired_licenses_loop(app):
             conn = sqlite3.connect("database.db")
             cursor = conn.cursor()
             
-            # Find all users who are currently marked as used/active but their expiry is past today
+            # Find all users whose latest license has expired
             today = datetime.now().strftime("%Y-%m-%d")
             cursor.execute("""
-                SELECT DISTINCT used_by, expiry
-                FROM licenses
-                WHERE used = 1 AND used_by IS NOT NULL AND expiry < ?
+                SELECT used_by, max_expiry
+                FROM (
+                    SELECT used_by, MAX(expiry) as max_expiry
+                    FROM licenses
+                    WHERE used = 1 AND used_by IS NOT NULL
+                    GROUP BY used_by
+                )
+                WHERE max_expiry < ?
             """, (today,))
             
             expired_users = cursor.fetchall()
@@ -444,11 +591,24 @@ async def admin(update, context):
     register_current_user(update)
     data = get_admin_stats()
 
+    keyboard = [
+        [
+            InlineKeyboardButton("🔑 Gen Key", callback_data="admin_genkey_menu"),
+            InlineKeyboardButton("👥 Users List", callback_data="admin_users"),
+        ],
+        [
+            InlineKeyboardButton("💾 Backup DB", callback_data="admin_backup"),
+            InlineKeyboardButton("📩 Latest Code", callback_data="admin_latest"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     await update.message.reply_text(
         f"🛠 Admin Dashboard\n\n"
         f"👥 Active Users: {data['users']}\n"
         f"🔑 Generated Keys: {data['keys']}\n"
-        f"📩 Saved Codes: {data['codes']}"
+        f"📩 Saved Codes: {data['codes']}",
+        reply_markup=reply_markup
     )
 
 async def extend(update, context):

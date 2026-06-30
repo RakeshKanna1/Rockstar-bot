@@ -46,10 +46,40 @@ def get_latest_code():
             id=messages[0]["id"]
         ).execute()
 
-        snippet = msg.get("snippet", "")
+        payload = msg.get("payload", {})
+        headers = payload.get("headers", [])
+        subject = ""
+        for header in headers:
+            if header.get("name", "").lower() == "subject":
+                subject = header.get("value", "")
+                break
 
-        # Search for a 6-digit verification code
-        code_match = re.search(r"\b\d{6}\b", snippet)
+        def get_body(part):
+            if "parts" in part:
+                for subpart in part["parts"]:
+                    body = get_body(subpart)
+                    if body:
+                        return body
+            else:
+                mime_type = part.get("mimeType", "")
+                data = part.get("body", {}).get("data", "")
+                if mime_type in ["text/plain", "text/html"] and data:
+                    try:
+                        import base64
+                        return base64.urlsafe_b64decode(data.encode("ASCII")).decode("utf-8")
+                    except Exception:
+                        pass
+            return ""
+
+        snippet = msg.get("snippet", "")
+        body = get_body(payload)
+
+        # Search for a 6-digit verification code in subject, snippet, and body
+        code_match = re.search(r"\b\d{6}\b", subject)
+        if not code_match:
+            code_match = re.search(r"\b\d{6}\b", snippet)
+        if not code_match:
+            code_match = re.search(r"\b\d{6}\b", body)
 
         if code_match:
             found_code = code_match.group()
