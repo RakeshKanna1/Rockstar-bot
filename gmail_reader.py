@@ -8,19 +8,18 @@ from database import save_code, code_exists
 logger = logging.getLogger(__name__)
 
 def get_latest_code():
-    if not os.path.exists("token.json"):
-        token_env = os.environ.get("GOOGLE_TOKEN")
-        if token_env:
-            try:
-                with open("token.json", "w") as token_file:
-                    token_file.write(token_env)
-                logger.info("Successfully recreated token.json from environment variables.")
-            except Exception as e:
-                logger.error(f"Failed to recreate token.json from environment: {e}")
-                return f"❌ Error: Failed to restore authorization token from env: {str(e)}"
-        else:
-            logger.error("token.json not found. Run auth.py first to authorize Google API.")
-            return "❌ Error: Gmail authorization token missing. Please contact admin."
+    token_env = os.environ.get("GOOGLE_TOKEN")
+    if token_env:
+        try:
+            with open("token.json", "w") as token_file:
+                token_file.write(token_env)
+            logger.info("Successfully synced token.json from environment variables.")
+        except Exception as e:
+            logger.error(f"Failed to sync token.json from environment: {e}")
+            return f"❌ Error: Failed to restore authorization token from env: {str(e)}"
+    elif not os.path.exists("token.json"):
+        logger.error("token.json not found. Run auth.py first to authorize Google API.")
+        return "❌ Error: Gmail authorization token missing. Please contact admin."
 
     try:
         creds = Credentials.from_authorized_user_file(
