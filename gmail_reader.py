@@ -11,12 +11,15 @@ def get_latest_code():
     token_env = os.environ.get("GOOGLE_TOKEN")
     if token_env:
         try:
+            import json
+            # Clean up copy-paste newlines and control characters
+            token_data = json.loads(token_env.strip())
             with open("token.json", "w") as token_file:
-                token_file.write(token_env)
-            logger.info("Successfully synced token.json from environment variables.")
+                json.dump(token_data, token_file)
+            logger.info("Successfully synced and cleaned token.json from environment variables.")
         except Exception as e:
             logger.error(f"Failed to sync token.json from environment: {e}")
-            return f"❌ Error: Failed to restore authorization token from env: {str(e)}"
+            return f"❌ Error: Failed to parse and restore token from environment: {str(e)}"
     elif not os.path.exists("token.json"):
         logger.error("token.json not found. Run auth.py first to authorize Google API.")
         return "❌ Error: Gmail authorization token missing. Please contact admin."
