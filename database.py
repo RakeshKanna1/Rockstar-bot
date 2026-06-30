@@ -3,8 +3,11 @@ import random
 import string
 from datetime import datetime, timedelta
 
+def get_db_connection():
+    return sqlite3.connect("database.db", timeout=10)
+
 def init_db():
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -38,7 +41,7 @@ def init_db():
     conn.close()
 
 def save_user_info(user_id, first_name, username):
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -55,7 +58,7 @@ def save_user_info(user_id, first_name, username):
     conn.close()
 
 def get_license_expiry(user_id):
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -96,7 +99,7 @@ def generate_license(days):
         )
     )
 
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -114,7 +117,7 @@ def generate_license(days):
     return key
 
 def activate_license(key, user_id):
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -179,7 +182,7 @@ def activate_license(key, user_id):
     return expiry
 
 def is_user_active(user_id):
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -206,7 +209,7 @@ def is_user_active(user_id):
         return False
 
 def save_code(code):
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -218,7 +221,7 @@ def save_code(code):
     conn.close()
 
 def clear_history():
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute("DELETE FROM codes")
@@ -227,7 +230,7 @@ def clear_history():
     conn.close()
 
 def code_exists(code):
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -241,7 +244,7 @@ def code_exists(code):
     return result is not None
 
 def get_history(limit=5):
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -255,7 +258,7 @@ def get_history(limit=5):
     return [row[0] for row in rows]
 
 def get_stats():
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute("SELECT COUNT(*) FROM codes")
@@ -274,7 +277,7 @@ def get_stats():
     }
 
 def get_admin_stats():
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute("SELECT COUNT(*) FROM licenses")
@@ -304,7 +307,7 @@ def get_admin_stats():
     }
 
 def get_users():
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     # Get unique users, their latest expiry, and their name/username from the users table
@@ -322,7 +325,7 @@ def get_users():
     return users
 
 def get_all_user_ids():
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     # Get all unique active users today
@@ -339,7 +342,7 @@ def get_all_user_ids():
     return [user[0] for user in users if user[0] is not None]
 
 def revoke_user(user_id):
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -357,7 +360,7 @@ def revoke_user(user_id):
     conn.close()
 
 def extend_license(user_id, days):
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute(
@@ -403,7 +406,7 @@ def extend_license(user_id, days):
 
 def find_user_by_username(username):
     username = username.lstrip('@')
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT user_id FROM users WHERE username LIKE ?", (username,))
     row = cursor.fetchone()
@@ -411,7 +414,7 @@ def find_user_by_username(username):
     return row[0] if row else None
 
 def get_user_details(user_id):
-    conn = sqlite3.connect("database.db")
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # Get user profile

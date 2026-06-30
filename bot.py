@@ -734,6 +734,7 @@ async def broadcast(update, context):
     message = " ".join(context.args)
     users_list = get_all_user_ids()
 
+    from telegram.error import RetryAfter
     sent = 0
     for user_id in users_list:
         try:
@@ -742,6 +743,18 @@ async def broadcast(update, context):
                 text=f"📢 Announcement\n\n{message}"
             )
             sent += 1
+            await asyncio.sleep(0.05)  # Pause to avoid Telegram flood rate limits
+        except RetryAfter as e:
+            logger.warning(f"Rate limited. Sleeping for {e.retry_after} seconds.")
+            await asyncio.sleep(e.retry_after)
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"📢 Announcement\n\n{message}"
+                )
+                sent += 1
+            except Exception as e_retry:
+                logger.warning(f"Failed to broadcast to {user_id} after retry: {e_retry}")
         except Exception as e:
             logger.warning(f"Failed to broadcast to {user_id}: {e}")
 
