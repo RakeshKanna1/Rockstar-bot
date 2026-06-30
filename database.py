@@ -310,9 +310,10 @@ def get_users():
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Get unique users, their latest expiry, and their name/username from the users table
+    # Get unique users, their latest expiry, name/username, and concat of activated keys
     cursor.execute("""
-        SELECT l.used_by, MAX(l.expiry) as latest_expiry, u.first_name, u.username
+        SELECT l.used_by, MAX(l.expiry) as latest_expiry, u.first_name, u.username,
+               GROUP_CONCAT(l.license_key, ', ') as activated_keys
         FROM licenses l
         LEFT JOIN users u ON l.used_by = u.user_id
         WHERE l.used = 1 AND l.used_by IS NOT NULL

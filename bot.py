@@ -84,21 +84,14 @@ async def start(update, context):
         reply_markup=reply_markup
     )
 
-async def users(update, context):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    register_current_user(update)
-    data = get_users()
-
+def format_users_list(data):
     if not data:
-        await update.message.reply_text(
-            "No users found."
-        )
-        return
+        return "No users found."
 
-    message = "👥 Rockstar Bot Users List\n\n"
-    for user_id, expiry, first_name, username in data:
+    active_users = []
+    expired_users = []
+
+    for user_id, expiry, first_name, username, activated_keys in data:
         name_str = first_name if first_name else "Unknown"
         if username:
             name_str += f" (@{username})"
@@ -111,21 +104,54 @@ async def users(update, context):
         except (ValueError, TypeError):
             days = None
 
+        keys_str = activated_keys if activated_keys else "None"
+
         if days is None:
             status_str = "Unknown Expiry"
+            expired_users.append((name_str, user_id, expiry, status_str, keys_str))
         elif days > 0:
-            status_str = f"✅ Active (⏳ {days} day{'s' if days > 1 else ''} left)"
+            status_str = f"⏳ {days} day{'s' if days > 1 else ''} left"
+            active_users.append((name_str, user_id, expiry, status_str, keys_str))
         elif days == 0:
             status_str = "⚠️ Expires today!"
+            active_users.append((name_str, user_id, expiry, status_str, keys_str))
         else:
             status_str = f"❌ Expired ({abs(days)} day{'s' if abs(days) > 1 else ''} ago)"
+            expired_users.append((name_str, user_id, expiry, status_str, keys_str))
 
-        message += (
-            f"👤 **Name**: {name_str}\n"
-            f"🆔 **ID**: `{user_id}`\n"
-            f"📅 **Expiry**: {expiry}\n"
-            f"💡 **Status**: {status_str}\n\n"
-        )
+    message = "👥 **Rockstar Bot Users Directory**\n\n"
+
+    if active_users:
+        message += "🟢 **ACTIVE LICENSES**\n"
+        message += "---------------------\n"
+        for idx, (name, u_id, exp, status, keys) in enumerate(active_users, 1):
+            message += (
+                f"{idx}. **{name}**\n"
+                f"   🆔 ID: `{u_id}`\n"
+                f"   🔑 Key(s): `{keys}`\n"
+                f"   📅 Expiry: `{exp}` ({status})\n\n"
+            )
+
+    if expired_users:
+        message += "🔴 **EXPIRED LICENSES**\n"
+        message += "----------------------\n"
+        for idx, (name, u_id, exp, status, keys) in enumerate(expired_users, 1):
+            message += (
+                f"{idx}. **{name}**\n"
+                f"   🆔 ID: `{u_id}`\n"
+                f"   🔑 Key(s): `{keys}`\n"
+                f"   📅 Expiry: `{exp}` ({status})\n\n"
+            )
+
+    return message
+
+async def users(update, context):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    register_current_user(update)
+    data = get_users()
+    message = format_users_list(data)
 
     # Chunk output if text exceeds Telegram's limit
     if len(message) > 4000:
@@ -362,38 +388,7 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("⬅️ Back to Admin", callback_data="admin_menu")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        if not data_users:
-            await query.edit_message_text("No users found.", reply_markup=reply_markup)
-            return
-
-        message = "👥 Rockstar Bot Users List\n\n"
-        for u_id, expiry, first_name, username in data_users:
-            name_str = first_name if first_name else "Unknown"
-            if username:
-                name_str += f" (@{username})"
-
-            try:
-                expiry_date = datetime.strptime(expiry, "%Y-%m-%d").date()
-                today_date = datetime.now().date()
-                days = (expiry_date - today_date).days
-            except (ValueError, TypeError):
-                days = None
-
-            if days is None:
-                status_str = "Unknown Expiry"
-            elif days > 0:
-                status_str = f"✅ Active (⏳ {days} day{'s' if days > 1 else ''} left)"
-            elif days == 0:
-                status_str = "⚠️ Expires today!"
-            else:
-                status_str = f"❌ Expired ({abs(days)} day{'s' if abs(days) > 1 else ''} ago)"
-
-            message += (
-                f"👤 **Name**: {name_str}\n"
-                f"🆔 **ID**: `{u_id}`\n"
-                f"📅 **Expiry**: {expiry}\n"
-                f"💡 **Status**: {status_str}\n\n"
-            )
+        message = format_users_list(data_users)
 
         if len(message) > 4000:
             message = message[:3900] + "\n... (Truncated due to length)"
