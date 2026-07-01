@@ -511,7 +511,7 @@ async def check_expired_licenses_loop(app):
                 FROM (
                     SELECT used_by, MAX(expiry) as max_expiry
                     FROM licenses
-                    WHERE used = 1 AND used_by IS NOT NULL
+                    WHERE used = 1 AND revoked = 0 AND used_by IS NOT NULL
                     GROUP BY used_by
                 )
                 WHERE max_expiry < ?

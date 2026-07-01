@@ -1,5 +1,5 @@
 import sqlite3
-import random
+import secrets
 import string
 from datetime import datetime, timedelta
 
@@ -24,9 +24,16 @@ def init_db():
         days INTEGER,
         used INTEGER DEFAULT 0,
         used_by INTEGER,
-        expiry TEXT
+        expiry TEXT,
+        revoked INTEGER DEFAULT 0
     )
     """)
+
+    try:
+        cursor.execute("ALTER TABLE licenses ADD COLUMN revoked INTEGER DEFAULT 0")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e).lower():
+            raise
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
@@ -65,7 +72,7 @@ def get_license_expiry(user_id):
         """
         SELECT expiry
         FROM licenses
-        WHERE used_by = ? AND expiry IS NOT NULL
+        WHERE used = 1 AND revoked = 0 AND used_by = ? AND expiry IS NOT NULL
         ORDER BY expiry DESC
         LIMIT 1
         """,
@@ -92,24 +99,24 @@ def get_days_remaining(user_id):
         return 0
 
 def generate_license(days):
-    key = "RAKEXURA-" + ''.join(
-        random.choices(
-            string.ascii_uppercase + string.digits,
-            k=8
-        )
-    )
-
     conn = get_db_connection()
     cursor = conn.cursor()
+    alphabet = string.ascii_uppercase + string.digits
 
-    cursor.execute(
-        """
-        INSERT INTO licenses
-        (license_key, days)
-        VALUES (?, ?)
-        """,
-        (key, days)
-    )
+    while True:
+        key = "RAKEXURA-" + ''.join(secrets.choice(alphabet) for _ in range(10))
+        try:
+            cursor.execute(
+                """
+                INSERT INTO licenses
+                (license_key, days)
+                VALUES (?, ?)
+                """,
+                (key, days)
+            )
+            break
+        except sqlite3.IntegrityError:
+            continue
 
     conn.commit()
     conn.close()
@@ -124,7 +131,7 @@ def activate_license(key, user_id):
         """
         SELECT days, used
         FROM licenses
-        WHERE license_key = ?
+        WHERE license_key = ? AND revoked = 0
         """,
         (key,)
     )
@@ -146,7 +153,7 @@ def activate_license(key, user_id):
         """
         SELECT expiry
         FROM licenses
-        WHERE used_by = ? AND expiry IS NOT NULL
+        WHERE used = 1 AND revoked = 0 AND used_by = ? AND expiry IS NOT NULL
         ORDER BY expiry DESC
         LIMIT 1
         """,
@@ -170,7 +177,8 @@ def activate_license(key, user_id):
         UPDATE licenses
         SET used = 1,
             used_by = ?,
-            expiry = ?
+            expiry = ?,
+            revoked = 0
         WHERE license_key = ?
         """,
         (user_id, expiry, key)
@@ -189,7 +197,7 @@ def is_user_active(user_id):
         """
         SELECT expiry
         FROM licenses
-        WHERE used_by = ? AND expiry IS NOT NULL
+        WHERE used = 1 AND revoked = 0 AND used_by = ? AND expiry IS NOT NULL
         ORDER BY expiry DESC
         LIMIT 1
         """,
@@ -289,7 +297,7 @@ def get_admin_stats():
         """
         SELECT COUNT(DISTINCT used_by)
         FROM licenses
-        WHERE used = 1 AND used_by IS NOT NULL AND expiry >= ?
+        WHERE used = 1 AND revoked = 0 AND used_by IS NOT NULL AND expiry >= ?
         """,
         (today,)
     )
@@ -316,7 +324,7 @@ def get_users():
                GROUP_CONCAT(l.license_key, ', ') as activated_keys
         FROM licenses l
         LEFT JOIN users u ON l.used_by = u.user_id
-        WHERE l.used = 1 AND l.used_by IS NOT NULL
+        WHERE l.used = 1 AND l.revoked = 0 AND l.used_by IS NOT NULL
         GROUP BY l.used_by
     """)
 
@@ -334,7 +342,7 @@ def get_all_user_ids():
     cursor.execute("""
         SELECT DISTINCT used_by
         FROM licenses
-        WHERE used = 1 AND used_by IS NOT NULL AND expiry >= ?
+        WHERE used = 1 AND revoked = 0 AND used_by IS NOT NULL AND expiry >= ?
     """, (today,))
 
     users = cursor.fetchall()
@@ -350,8 +358,7 @@ def revoke_user(user_id):
         """
         UPDATE licenses
         SET used = 0,
-            used_by = NULL,
-            expiry = NULL
+            revoked = 1
         WHERE used_by = ?
         """,
         (user_id,)
@@ -368,7 +375,7 @@ def extend_license(user_id, days):
         """
         SELECT id, expiry
         FROM licenses
-        WHERE used_by = ? AND expiry IS NOT NULL
+        WHERE used = 1 AND revoked = 0 AND used_by = ? AND expiry IS NOT NULL
         ORDER BY expiry DESC
         LIMIT 1
         """,

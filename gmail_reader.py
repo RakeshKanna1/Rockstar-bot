@@ -1,36 +1,58 @@
-import re
-import os
+import base64
+import json
 import logging
+import os
+import re
+
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-from database import save_code, code_exists
+
+from database import code_exists, save_code
 
 logger = logging.getLogger(__name__)
 
-def get_latest_code():
+GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+
+def load_credentials():
     token_env = os.environ.get("GOOGLE_TOKEN")
     if token_env:
         try:
-            import json
-            # Clean up all copy-paste wrapping spaces, tabs, newlines, and carriage returns
-            cleaned_env = token_env.replace("\n", "").replace("\r", "").replace(" ", "").replace("\t", "")
+            cleaned_env = re.sub(r"[\x00-\x1f\x7f]", "", token_env.strip())
             token_data = json.loads(cleaned_env)
-            with open("token.json", "w") as token_file:
-                json.dump(token_data, token_file)
-            logger.info("Successfully synced and cleaned token.json from environment variables.")
+            logger.info("Loaded Google token from environment variables.")
+            return Credentials.from_authorized_user_info(token_data, GMAIL_SCOPES)
         except Exception as e:
-            logger.error(f"Failed to sync token.json from environment: {e}")
-            return f"❌ Error: Failed to parse and restore token from environment: {str(e)}"
-    elif not os.path.exists("token.json"):
+            logger.error(f"Failed to load Google token from environment: {e}")
+            raise ValueError(f"Failed to parse GOOGLE_TOKEN: {str(e)}") from e
+
+    if not os.path.exists("token.json"):
         logger.error("token.json not found. Run auth.py first to authorize Google API.")
-        return "❌ Error: Gmail authorization token missing. Please contact admin."
+        raise FileNotFoundError("Gmail authorization token missing. Please contact admin.")
 
+    return Credentials.from_authorized_user_file("token.json", GMAIL_SCOPES)
+
+
+def get_message_body(part):
+    if "parts" in part:
+        for subpart in part["parts"]:
+            body = get_message_body(subpart)
+            if body:
+                return body
+    else:
+        mime_type = part.get("mimeType", "")
+        data = part.get("body", {}).get("data", "")
+        if mime_type in ["text/plain", "text/html"] and data:
+            try:
+                return base64.urlsafe_b64decode(data.encode("ASCII")).decode("utf-8")
+            except Exception:
+                pass
+    return ""
+
+
+def get_latest_code():
     try:
-        creds = Credentials.from_authorized_user_file(
-            "token.json",
-            ["https://www.googleapis.com/auth/gmail.readonly"]
-        )
-
+        creds = load_credentials()
         service = build("gmail", "v1", credentials=creds)
 
         results = service.users().messages().list(
@@ -57,27 +79,9 @@ def get_latest_code():
                 subject = header.get("value", "")
                 break
 
-        def get_body(part):
-            if "parts" in part:
-                for subpart in part["parts"]:
-                    body = get_body(subpart)
-                    if body:
-                        return body
-            else:
-                mime_type = part.get("mimeType", "")
-                data = part.get("body", {}).get("data", "")
-                if mime_type in ["text/plain", "text/html"] and data:
-                    try:
-                        import base64
-                        return base64.urlsafe_b64decode(data.encode("ASCII")).decode("utf-8")
-                    except Exception:
-                        pass
-            return ""
-
         snippet = msg.get("snippet", "")
-        body = get_body(payload)
+        body = get_message_body(payload)
 
-        # Search for a 6-digit verification code in subject, snippet, and body
         code_match = re.search(r"\b\d{6}\b", subject)
         if not code_match:
             code_match = re.search(r"\b\d{6}\b", snippet)
@@ -96,4 +100,4 @@ def get_latest_code():
 
     except Exception as e:
         logger.error(f"Failed to fetch latest Rockstar code from Gmail: {e}", exc_info=True)
-        return f"❌ Error checking verification email: {str(e)}"
+        return f"Error checking verification email: {str(e)}"
