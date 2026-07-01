@@ -471,6 +471,85 @@ async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "detail":
         await show_user_detail_callback(query, user_id)
 
+async def user_action_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query:
+        return
+
+    if update.effective_user.id != ADMIN_ID:
+        await query.answer("Access denied.", show_alert=True)
+        return
+
+    parts = query.data.split(":")
+    action = parts[0]
+
+    try:
+        user_id = int(parts[1])
+    except (IndexError, ValueError):
+        await query.answer("Invalid user action.", show_alert=True)
+        return
+
+    if action == "extend":
+        try:
+            days = int(parts[2])
+        except (IndexError, ValueError):
+            await query.answer("Invalid extension duration.", show_alert=True)
+            return
+
+        try:
+            expiry = extend_license(user_id, days)
+            if not expiry:
+                await query.answer("User has no active license.", show_alert=True)
+                await query.edit_message_text(
+                    f"Failed to extend license for User `{user_id}`. User not found or has no active license.",
+                    parse_mode="Markdown"
+                )
+                return
+
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        f"License Extended!\n\n"
+                        f"Your license has been extended by {days} days.\n"
+                        f"New Expiry Date: {expiry}"
+                    )
+                )
+                notify_status = "User notified successfully."
+            except Exception as e:
+                notify_status = f"Failed to notify user: {e}"
+
+            await query.answer(f"Extended by {days} days.")
+            await query.edit_message_text(
+                f"License extended by **{days} days** for User `{user_id}`.\n"
+                f"New Expiry: `{expiry}`\n"
+                f"Notification: {notify_status}",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.error(f"Failed to extend user {user_id}: {e}", exc_info=True)
+            await query.answer(f"Extend failed: {e}", show_alert=True)
+
+    elif action == "revoke":
+        try:
+            revoke_user(user_id)
+            await query.answer("User revoked.")
+            await query.edit_message_text(
+                f"License access for User `{user_id}` has been revoked.",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.error(f"Failed to revoke user {user_id}: {e}", exc_info=True)
+            await query.answer(f"Revoke failed: {e}", show_alert=True)
+
+    elif action == "detail":
+        try:
+            await show_user_detail_callback(query, user_id)
+            await query.answer("Refreshed.")
+        except Exception as e:
+            logger.error(f"Failed to refresh user {user_id}: {e}", exc_info=True)
+            await query.answer(f"Refresh failed: {e}", show_alert=True)
+
 async def backup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -1137,6 +1216,7 @@ def main():
     app.add_handler(CommandHandler("backup", backup))
 
     # Callback Query Handlers
+    app.add_handler(CallbackQueryHandler(user_action_callbacks, pattern=r"^(extend|revoke|detail):"))
     app.add_handler(CallbackQueryHandler(admin_callbacks))
 
     # Message handlers
