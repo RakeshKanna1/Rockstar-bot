@@ -498,7 +498,7 @@ async def check_expired_licenses_loop(app):
     while True:
         try:
             logger.info("Running background license expiry check...")
-            from datetime import datetime
+            from datetime import datetime, timedelta
             import sqlite3
             
             conn = sqlite3.connect("database.db")
@@ -518,6 +518,22 @@ async def check_expired_licenses_loop(app):
             """, (today,))
             
             expired_users = cursor.fetchall()
+
+            # Find active users who have not interacted with the bot for more than 5 days
+            inactive_cutoff = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute("""
+                SELECT l.used_by, u.last_seen, MAX(l.expiry) as max_expiry
+                FROM licenses l
+                JOIN users u ON l.used_by = u.user_id
+                WHERE l.used = 1
+                  AND l.used_by IS NOT NULL
+                  AND l.expiry >= ?
+                  AND u.last_seen IS NOT NULL
+                  AND u.last_seen < ?
+                GROUP BY l.used_by
+            """, (today, inactive_cutoff))
+
+            inactive_users = cursor.fetchall()
             conn.close()
             
             for user_id, expiry in expired_users:
@@ -569,6 +585,51 @@ async def check_expired_licenses_loop(app):
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send admin notification for user {user_id} expiry: {e}")
+
+            for user_id, last_seen, expiry in inactive_users:
+                from database import revoke_user, get_user_details
+                details = get_user_details(user_id)
+                username = None
+                first_name = "User"
+                if details and details["profile"]:
+                    first_name, username, _ = details["profile"]
+
+                name_str = first_name
+                if username:
+                    name_str += f" (@{username})"
+
+                revoke_user(user_id)
+                logger.info(f"Automatically revoked inactive user {user_id} (last seen {last_seen})")
+
+                try:
+                    await app.bot.send_message(
+                        chat_id=user_id,
+                        text=(
+                            f"⚠️ **License Revoked Due to Inactivity**\n\n"
+                            f"Hello {first_name}, your Rakexura Rockstar license was revoked because "
+                            f"you were inactive for more than 5 days.\n\n"
+                            f"📲 To reactivate or renew, contact: {WHATSAPP_NUMBER}"
+                        ),
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to notify inactive user {user_id}: {e}")
+
+                try:
+                    await app.bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=(
+                            f"⚠️ **Inactive User Revoked**\n\n"
+                            f"• **User**: {name_str}\n"
+                            f"• **ID**: `{user_id}`\n"
+                            f"• **Last Seen**: `{last_seen}`\n"
+                            f"• **License Expiry Was**: `{expiry}`\n"
+                            f"User was inactive for more than 5 days."
+                        ),
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send admin notification for inactive user {user_id}: {e}")
 
         except Exception as e:
             logger.error(f"Error in background expiry check loop: {e}", exc_info=True)
